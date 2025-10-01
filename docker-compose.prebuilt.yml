@@ -21,7 +21,7 @@ services:
 
   # Backend - using pre-built Python + FastAPI
   backend:
-    image: python:3.10-slim
+    image: python:3.13.7-slim
     restart: always
     networks:
       - traefik-public
