@@ -1,0 +1,140 @@
+services:
+  # DocumentDB - already using pre-built image
+  documentdb:
+    image: ghcr.io/documentdb/documentdb/documentdb-local:latest
+    restart: always
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 10s
+      retries: 5
+      start_period: 30s
+      timeout: 10s
+    volumes:
+      - app-db-data:/data/db
+    env_file:
+      - .env
+    environment:
+      - DOCUMENTDB_USER=${DOCUMENTDB_USER?Variable not set}
+      - DOCUMENTDB_PASSWORD=${DOCUMENTDB_PASSWORD?Variable not set}
+    ports:
+      - "10260:10260"
+
+  # Backend - using pre-built Python + FastAPI
+  backend:
+    image: python:3.10-slim
+    restart: always
+    networks:
+      - traefik-public
+      - default
+    depends_on:
+      documentdb:
+        condition: service_healthy
+        restart: true
+    volumes:
+      - ./backend:/app
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    environment:
+      - DOMAIN=${DOMAIN}
+      - FRONTEND_HOST=${FRONTEND_HOST?Variable not set}
+      - ENVIRONMENT=${ENVIRONMENT}
+      - BACKEND_CORS_ORIGINS=${BACKEND_CORS_ORIGINS}
+      - SECRET_KEY=${SECRET_KEY?Variable not set}
+      - FIRST_SUPERUSER=${FIRST_SUPERUSER?Variable not set}
+      - FIRST_SUPERUSER_PASSWORD=${FIRST_SUPERUSER_PASSWORD?Variable not set}
+      - SMTP_HOST=${SMTP_HOST}
+      - SMTP_USER=${SMTP_USER}
+      - SMTP_PASSWORD=${SMTP_PASSWORD}
+      - EMAILS_FROM_EMAIL=${EMAILS_FROM_EMAIL}
+      - DOCUMENTDB_HOST=documentdb
+      - DOCUMENTDB_PORT=10260
+      - DOCUMENTDB_USER=${DOCUMENTDB_USER?Variable not set}
+      - DOCUMENTDB_PASSWORD=${DOCUMENTDB_PASSWORD?Variable not set}
+      - DOCUMENTDB_DB=${DOCUMENTDB_DB}
+      - SENTRY_DSN=${SENTRY_DSN}
+    command: |
+      bash -c "
+      pip install fastapi uvicorn python-multipart pymongo motor python-jose[cryptography] passlib[bcrypt] python-multipart email-validator &&
+      cd /app &&
+      python -m uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+      "
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/v1/utils/health-check/"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Frontend - using pre-built Node.js + React
+  frontend:
+    image: node:18-alpine
+    restart: always
+    networks:
+      - traefik-public
+      - default
+    volumes:
+      - ./frontend:/app
+    ports:
+      - "5173:3000"
+    command: |
+      bash -c "
+      cd /app &&
+      npm install &&
+      npm run dev -- --host 0.0.0.0 --port 3000
+      "
+
+  # Adminer - already using pre-built image
+  adminer:
+    image: adminer
+    restart: always
+    networks:
+      - traefik-public
+      - default
+    depends_on:
+      - documentdb
+    environment:
+      - ADMINER_DESIGN=pepa-linha-dark
+    ports:
+      - "8080:8080"
+
+  # Mailcatcher - already using pre-built image
+  mailcatcher:
+    image: schickling/mailcatcher
+    ports:
+      - "1080:1080"
+      - "1025:1025"
+
+  # Proxy - already using pre-built image
+  proxy:
+    image: traefik:3.0
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    ports:
+      - "80:80"
+      - "8090:8080"
+    command:
+      - --providers.docker
+      - --providers.docker.constraints=Label(`traefik.constraint-label`, `traefik-public`)
+      - --providers.docker.exposedbydefault=false
+      - --entrypoints.http.address=:80
+      - --entrypoints.https.address=:443
+      - --accesslog
+      - --log
+      - --log.level=DEBUG
+      - --api
+      - --api.insecure=true
+    labels:
+      - traefik.enable=true
+      - traefik.constraint-label=traefik-public
+      - traefik.http.middlewares.https-redirect.contenttype.autodetect=false
+    networks:
+      - traefik-public
+      - default
+
+volumes:
+  app-db-data:
+
+networks:
+  traefik-public:
+    external: false
