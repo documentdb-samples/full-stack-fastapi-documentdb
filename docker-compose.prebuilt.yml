@@ -68,7 +68,7 @@ services:
 
   # Frontend - using pre-built Node.js + React
   frontend:
-    image: node:18-alpine
+    image: node:24-alpine
     restart: always
     networks:
       - traefik-public
